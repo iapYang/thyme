@@ -27,6 +27,9 @@
 - (void)clearSessionsFromMenu;
 - (void)addSessionToMenu:(Session*)session;
 
+- (void)onSessionResignActive:(NSNotification*)note;
+- (void)onSessionBecomeActive:(NSNotification*)note;
+
 - (IBAction)clear:(id)sender;
 - (IBAction)saveAction:(id)sender;
 - (IBAction)okButtonAction:(id)sender;
@@ -112,7 +115,7 @@
         [restartItem setEnabled:NO];
         [finishItem setEnabled:NO];
         
-        if ([[NSUserDefaults standardUserDefaults] boolForKey:@"askForTagOnFinishButton"]) {
+        if ([[NSUserDefaults standardUserDefaults] boolForKey:@"askForTagOnFinish"]) {
             //Show tag window
             if (self.tagWindowController == nil) {
                 TagWindowController* pwc = [[TagWindowController alloc] initWithWindowNibName:@"TagWindowController"];
@@ -366,12 +369,12 @@
 
 - (void)notifyPauseWithDescription:(NSString*)description
 {
-    [GrowlApplicationBridge notifyWithTitle:@"Thyme" description:[@"Paused at " stringByAppendingString:description] notificationName:@"pause" iconData:nil priority:0 isSticky:NO clickContext:nil];
+    [GrowlApplicationBridge notifyWithTitle:@"Thyme" description:[@"Paused at " stringByAppendingString:description] notificationName:@"pause" iconData:nil priority:0 isSticky:NO clickContext:nil[...]
 }
 
 - (void)notifyStopWithDescription:(NSString*)description
 {
-    [GrowlApplicationBridge notifyWithTitle:@"Thyme" description:[@"Stopped at " stringByAppendingString:description] notificationName:@"stop" iconData:nil priority:0 isSticky:NO clickContext:nil];
+    [GrowlApplicationBridge notifyWithTitle:@"Thyme" description:[@"Stopped at " stringByAppendingString:description] notificationName:@"stop" iconData:nil priority:0 isSticky:NO clickContext:nil[...]
 }
 
 #pragma mark NSUserDefaultsDidChangeNotification
@@ -435,7 +438,7 @@
 
 #pragma mark Sleep/Wake
 
-- (void) onSleep: (NSNotification*) note
+- (void) onSleep:(NSNotification*)note
 {
     if ([[NSUserDefaults standardUserDefaults] boolForKey:@"pauseOnSleep"]) {
         startOnWake = [self.stopwatch isActive];
@@ -443,7 +446,7 @@
     }
 }
 
-- (void) onWake: (NSNotification*) note
+- (void) onWake:(NSNotification*)note
 {
     if ([[NSUserDefaults standardUserDefaults] boolForKey:@"pauseOnSleep"] && startOnWake) {
         startOnWake = NO;
@@ -451,20 +454,38 @@
     }
 }
 
-#pragma mark Screensaver
+#pragma mark Session Active/Inactive
 
-- (void) onScreensaverStart: (NSNotification*) note
+- (void) onSessionResignActive:(NSNotification*)note
 {
     if ([[NSUserDefaults standardUserDefaults] boolForKey:@"pauseOnScreensaver"]) {
-        startOnScreensaverEnd = [self.stopwatch isActive];
+        resumeOnUserSessionActive = [self.stopwatch isActive];
         [self pauseWithNotification:NO];
     }
 }
 
-- (void) onScreensaverStop: (NSNotification*) note
+- (void) onSessionBecomeActive:(NSNotification*)note
 {
-    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"pauseOnScreensaver"] && startOnScreensaverEnd) {
-        startOnScreensaverEnd = NO;
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"pauseOnScreensaver"] && resumeOnUserSessionActive) {
+        resumeOnUserSessionActive = NO;
+        [self startWithNotification:NO];
+    }
+}
+
+#pragma mark Screensaver
+
+- (void) onScreensaverStart:(NSNotification*)note
+{
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"pauseOnScreensaver"]) {
+        resumeOnUserSessionActive = [self.stopwatch isActive] || resumeOnUserSessionActive;
+        [self pauseWithNotification:NO];
+    }
+}
+
+- (void) onScreensaverStop:(NSNotification*)note
+{
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"pauseOnScreensaver"] && resumeOnUserSessionActive) {
+        resumeOnUserSessionActive = NO;
         [self startWithNotification:NO];
     }
 }
@@ -475,7 +496,7 @@
 {
     [window close];
     startOnWake = NO;
-    startOnScreensaverEnd = NO;
+    resumeOnUserSessionActive = NO;
     
     // Setup the hotkey center
     DDHotKeyCenter *center = [[DDHotKeyCenter alloc] init];
@@ -507,7 +528,20 @@
      name:NSWorkspaceDidWakeNotification
      object:nil];
     
-    // Listen to screensaver
+    // Listen to session active/inactive
+    [[[NSWorkspace sharedWorkspace] notificationCenter]
+     addObserver:self
+     selector:@selector(onSessionResignActive:)
+     name:NSWorkspaceSessionDidResignActiveNotification
+     object:nil];
+    
+    [[[NSWorkspace sharedWorkspace] notificationCenter]
+     addObserver:self
+     selector:@selector(onSessionBecomeActive:)
+     name:NSWorkspaceSessionDidBecomeActiveNotification
+     object:nil];
+    
+    // Listen to screensaver / lock notifications
     [[NSDistributedNotificationCenter defaultCenter]
       addObserver:self
       selector:@selector(onScreensaverStart:)
@@ -635,9 +669,9 @@
     
     if (![persistentStoreCoordinator addPersistentStoreWithType:NSXMLStoreType 
                                                 configuration:nil 
-                                                URL:url 
-                                                options:nil 
-                                                error:&error])
+                                                        URL:url 
+                                                    options:nil 
+                                                      error:&error])
     {
         [[NSApplication sharedApplication] presentError:error];
         [persistentStoreCoordinator release], persistentStoreCoordinator = nil;
